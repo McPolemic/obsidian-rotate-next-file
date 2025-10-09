@@ -1,9 +1,29 @@
-const { Plugin, Notice, PluginSettingTab, Setting } = require('obsidian');
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
   nextFolder: 'Next',
   destinationFolder: 'Daily Notes'
 };
+
+class FilePickerModal extends FuzzySuggestModal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  getItems() {
+    const files = this.app.vault.getMarkdownFiles();
+    return files.filter(file => file.path.startsWith(`${this.plugin.settings.nextFolder}/`));
+  }
+
+  getItemText(file) {
+    return file.basename;
+  }
+
+  onChooseItem(file) {
+    this.plugin.rotateFile(file);
+  }
+}
 
 module.exports = class RotateNextFilePlugin extends Plugin {
   async onload() {
@@ -12,39 +32,53 @@ module.exports = class RotateNextFilePlugin extends Plugin {
     this.addCommand({
       id: 'rotate-next-file',
       name: 'Rotate File',
-      callback: async () => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file) {
-          new Notice('No active file to rotate.');
-          return;
-        }
-        const filePath = file.path;
-        if (!filePath.startsWith(`${this.settings.nextFolder}/`)) {
-          new Notice(`File not in folder: ${this.settings.nextFolder}`);
-          return;
-        }
-        const basename = file.basename;
-        const match = basename.match(/^Next (.+) Appointment$/);
-        if (!match) {
-          new Notice('Filename must match `Next {Appointment Type} Appointment`.');
-          return;
-        }
-        const appointmentType = match[1];
-        const isoDate = new Date().toISOString().split('T')[0];
-        const newName = `${this.settings.destinationFolder}/${isoDate} ${appointmentType} Appointment.md`;
+      callback: () => {
+        new FilePickerModal(this.app, this).open();
+      }
+    });
 
-        try {
-          await this.app.vault.rename(file, newName);
-          const templatePath = `${this.settings.nextFolder}/Next ${appointmentType} Appointment.md`;
-          const newFile = await this.app.vault.create(templatePath, '');
-          await this.app.workspace.getLeaf().openFile(newFile);
-        } catch (error) {
-          new Notice(`Error rotating file: ${error}`);
+    this.registerObsidianProtocolHandler('rotate-next-file', async (params) => {
+      if (params.file) {
+        const files = this.app.vault.getMarkdownFiles();
+        const file = files.find(f =>
+          f.path === `${this.settings.nextFolder}/${params.file}` ||
+          f.path === `${this.settings.nextFolder}/${params.file}.md` ||
+          f.basename === params.file
+        );
+
+        if (file) {
+          await this.rotateFile(file);
+        } else {
+          new Notice(`File not found: ${params.file}`);
         }
+      } else {
+        new FilePickerModal(this.app, this).open();
       }
     });
 
     this.addSettingTab(new RotateNextFileSettingTab(this.app, this));
+  }
+
+  async rotateFile(file) {
+    const basename = file.basename;
+    const match = basename.match(/^Next (.+)$/);
+    if (!match) {
+      new Notice('Filename must match `Next {Appointment Type}`.');
+      return;
+    }
+    const appointmentType = match[1];
+    const isoDate = new Date().toISOString().split('T')[0];
+    const newName = `${this.settings.destinationFolder}/${isoDate} ${appointmentType}.md`;
+
+    try {
+      await this.app.vault.rename(file, newName);
+      const templatePath = `${this.settings.nextFolder}/Next ${appointmentType}.md`;
+      const newFile = await this.app.vault.create(templatePath, '');
+      await this.app.workspace.getLeaf().openFile(newFile);
+      new Notice(`Rotated to ${newName}`);
+    } catch (error) {
+      new Notice(`Error rotating file: ${error}`);
+    }
   }
 
   onunload() {}
