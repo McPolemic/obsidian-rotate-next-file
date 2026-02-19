@@ -67,7 +67,7 @@ module.exports = class RotateNextFilePlugin extends Plugin {
       return;
     }
     const appointmentType = match[1];
-    const isoDate = new Date().toISOString().split('T')[0];
+    const isoDate = window.moment().format('YYYY-MM-DD');
     const newName = `${this.settings.destinationFolder}/${isoDate} ${appointmentType}.md`;
 
     try {
